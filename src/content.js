@@ -75,8 +75,15 @@
   let controlStatus = null;
   let controlCount = null;
   let controlIntervalInput = null;
+  let controlIntervalLabel = null;
+  let controlMinimizeButton = null;
+  let controlCloseButton = null;
+  let controlResizeHandle = null;
   let controlPosition = savedSettings.position || null;
   let controlSize = savedSettings.size || { width: 260, height: 0 };
+  let controlClosed = Boolean(savedSettings.closed);
+  let controlMinimized = Boolean(savedSettings.minimized);
+  let compactClickTimer = 0;
   const matchSeenOrder = new WeakMap();
 
   function readSettings() {
@@ -94,7 +101,9 @@
         JSON.stringify({
           intervalMs: clickIntervalMs,
           position: controlPosition,
-          size: controlSize
+          size: controlSize,
+          closed: controlClosed,
+          minimized: controlMinimized
         })
       );
     } catch (error) {
@@ -703,6 +712,11 @@
       return getState();
     }
 
+    if (controlClosed) {
+      controlClosed = false;
+      saveSettings();
+    }
+
     isAutoClicking = true;
     runStartedAtMs = Date.now();
     lastVerifyAtMs = 0;
@@ -715,6 +729,11 @@
   }
 
   function pauseAutoClicking() {
+    if (controlClosed) {
+      controlClosed = false;
+      saveSettings();
+    }
+
     isAutoClicking = false;
     try {
       window.clearInterval(clickTimer);
@@ -744,6 +763,54 @@
     }
   }
 
+  function closeControl() {
+    controlClosed = true;
+    saveSettings();
+    renderControl();
+  }
+
+  function minimizeControl() {
+    controlClosed = false;
+    controlMinimized = true;
+    saveSettings();
+    renderControl();
+  }
+
+  function restoreControl() {
+    controlClosed = false;
+    controlMinimized = false;
+    saveSettings();
+    renderControl();
+  }
+
+  function toggleAutoClickingFromControl() {
+    if (isAutoClicking) {
+      pauseAutoClicking();
+    } else {
+      startAutoClicking();
+    }
+  }
+
+  function handleControlButtonClick(event) {
+    if (!controlMinimized) {
+      toggleAutoClickingFromControl();
+      return;
+    }
+
+    window.clearTimeout(compactClickTimer);
+
+    if (event.detail >= 2) {
+      compactClickTimer = 0;
+      restoreControl();
+      return;
+    }
+
+    compactClickTimer = window.setTimeout(() => {
+      compactClickTimer = 0;
+      toggleAutoClickingFromControl();
+    }, 220);
+  }
+
   function getControlWidth() {
     const maxWidth = Math.max(220, window.innerWidth - 24);
     return clamp(Number(controlSize.width) || 260, 220, maxWidth);
@@ -763,14 +830,23 @@
       return;
     }
 
-    const width = getControlWidth();
-    const height = getControlHeight();
-    controlRoot.style.setProperty("width", `${width}px`, "important");
-
-    if (height > 0) {
-      controlRoot.style.setProperty("height", `${height}px`, "important");
-    } else {
+    if (controlMinimized) {
+      controlRoot.style.setProperty("min-width", "0", "important");
+      controlRoot.style.setProperty("min-height", "0", "important");
+      controlRoot.style.setProperty("width", "84px", "important");
       controlRoot.style.removeProperty("height");
+    } else {
+      const width = getControlWidth();
+      const height = getControlHeight();
+      controlRoot.style.setProperty("min-width", "220px", "important");
+      controlRoot.style.setProperty("min-height", "150px", "important");
+      controlRoot.style.setProperty("width", `${width}px`, "important");
+
+      if (height > 0) {
+        controlRoot.style.setProperty("height", `${height}px`, "important");
+      } else {
+        controlRoot.style.removeProperty("height");
+      }
     }
 
     if (controlPosition) {
@@ -819,7 +895,7 @@
   }
 
   function startControlResize(event) {
-    if (!controlRoot || event.button !== 0) {
+    if (!controlRoot || controlMinimized || event.button !== 0) {
       return;
     }
 
@@ -903,6 +979,15 @@
       "font: 800 14px/1.2 Arial, Helvetica, sans-serif !important"
     ].join("; ");
 
+    const headerActions = document.createElement("div");
+    headerActions.style.cssText = [
+      "align-items: center !important",
+      "display: grid !important",
+      "grid-template-columns: auto auto auto !important",
+      "gap: 6px !important",
+      "justify-items: end !important"
+    ].join("; ");
+
     controlCount = document.createElement("span");
     controlCount.className = "fish-again-finder-control-count";
     controlCount.style.cssText = [
@@ -911,8 +996,46 @@
       "font: 800 12px/1.2 Arial, Helvetica, sans-serif !important"
     ].join("; ");
 
-    const intervalLabel = document.createElement("label");
-    intervalLabel.style.cssText = [
+    function styleHeaderButton(button) {
+      button.style.cssText = [
+        "align-items: center !important",
+        "appearance: none !important",
+        "background: #f8fafc !important",
+        "border: 1px solid #cbd5e1 !important",
+        "border-radius: 6px !important",
+        "box-sizing: border-box !important",
+        "color: #0f172a !important",
+        "cursor: pointer !important",
+        "display: inline-flex !important",
+        "font: 900 13px/1 Arial, Helvetica, sans-serif !important",
+        "height: 22px !important",
+        "justify-content: center !important",
+        "padding: 0 !important",
+        "width: 22px !important"
+      ].join("; ");
+      button.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+      });
+    }
+
+    controlMinimizeButton = document.createElement("button");
+    controlMinimizeButton.type = "button";
+    controlMinimizeButton.textContent = "-";
+    controlMinimizeButton.title = "Minimize to pause button";
+    controlMinimizeButton.setAttribute("aria-label", "Minimize panel");
+    styleHeaderButton(controlMinimizeButton);
+    controlMinimizeButton.addEventListener("click", minimizeControl);
+
+    controlCloseButton = document.createElement("button");
+    controlCloseButton.type = "button";
+    controlCloseButton.textContent = "x";
+    controlCloseButton.title = "Close panel";
+    controlCloseButton.setAttribute("aria-label", "Close panel");
+    styleHeaderButton(controlCloseButton);
+    controlCloseButton.addEventListener("click", closeControl);
+
+    controlIntervalLabel = document.createElement("label");
+    controlIntervalLabel.style.cssText = [
       "align-items: center !important",
       "color: #334155 !important",
       "display: grid !important",
@@ -975,17 +1098,11 @@
       "padding: 10px 12px !important",
       "text-align: center !important"
     ].join("; ");
-    controlButton.addEventListener("click", () => {
-      if (isAutoClicking) {
-        pauseAutoClicking();
-      } else {
-        startAutoClicking();
-      }
-    });
+    controlButton.addEventListener("click", handleControlButtonClick);
 
-    const resizeHandle = document.createElement("span");
-    resizeHandle.title = "Drag to resize";
-    resizeHandle.style.cssText = [
+    controlResizeHandle = document.createElement("span");
+    controlResizeHandle.title = "Drag to resize";
+    controlResizeHandle.style.cssText = [
       "border-bottom: 3px solid #94a3b8 !important",
       "border-right: 3px solid #94a3b8 !important",
       "bottom: 5px !important",
@@ -995,25 +1112,26 @@
       "right: 5px !important",
       "width: 14px !important"
     ].join("; ");
-    resizeHandle.addEventListener("pointerdown", startControlResize);
+    controlResizeHandle.addEventListener("pointerdown", startControlResize);
 
-    controlHeader.append(title, controlCount);
-    intervalLabel.append(intervalPrefix, controlIntervalInput, intervalSuffix);
-    controlRoot.append(controlHeader, intervalLabel, controlButton, controlStatus, resizeHandle);
+    headerActions.append(controlCount, controlMinimizeButton, controlCloseButton);
+    controlHeader.append(title, headerActions);
+    controlIntervalLabel.append(intervalPrefix, controlIntervalInput, intervalSuffix);
+    controlRoot.append(controlHeader, controlIntervalLabel, controlButton, controlStatus, controlResizeHandle);
     document.body.appendChild(controlRoot);
     applyControlGeometry();
     renderControl();
   }
 
   function renderControl() {
-    const shouldShow = shouldShowControl();
+    const shouldShow = !controlClosed && (controlMinimized || shouldShowControl());
     if (!controlRoot && !shouldShow) {
       return;
     }
 
     createControl();
 
-    if (!controlRoot || !controlButton || !controlStatus || !controlCount) {
+    if (!controlRoot || !controlButton || !controlStatus || !controlCount || !controlIntervalLabel || !controlResizeHandle || !controlHeader) {
       return;
     }
 
@@ -1022,14 +1140,26 @@
       return;
     }
 
+    controlRoot.style.setProperty("gap", controlMinimized ? "0" : "8px", "important");
+    controlRoot.style.setProperty("padding", controlMinimized ? "0" : "10px", "important");
+    controlRoot.style.setProperty("border-radius", controlMinimized ? "7px" : "8px", "important");
+    controlHeader.style.setProperty("display", controlMinimized ? "none" : "grid", "important");
+    controlIntervalLabel.style.setProperty("display", controlMinimized ? "none" : "grid", "important");
+    controlStatus.style.setProperty("display", controlMinimized ? "none" : "block", "important");
+    controlResizeHandle.style.setProperty("display", controlMinimized ? "none" : "block", "important");
+
     controlCount.textContent = `${lastOnScreenCount} on screen`;
     controlButton.textContent = isAutoClicking ? "Pause" : "Start";
+    controlButton.title = controlMinimized ? "Click to start or pause. Double-click to expand." : "";
     controlButton.classList.toggle("is-running", isAutoClicking);
     controlButton.style.setProperty("background", isAutoClicking ? "#dc2626" : "#4f46e5", "important");
+    controlButton.style.setProperty("border-radius", controlMinimized ? "7px" : "7px", "important");
+    controlButton.style.setProperty("padding", controlMinimized ? "10px 0" : "10px 12px", "important");
     if (document.activeElement !== controlIntervalInput) {
       controlIntervalInput.value = formatSeconds(clickIntervalMs);
     }
     controlStatus.textContent = lastMessage;
+    applyControlGeometry();
   }
 
   function scheduleScan() {
