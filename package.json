@@ -1,6 +1,6 @@
 {
   "name": "fish-again-finder",
-  "version": "0.3.1",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "start": "web-ext run --source-dir .",
