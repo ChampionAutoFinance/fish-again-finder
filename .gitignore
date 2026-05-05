@@ -1,0 +1,8 @@
+node_modules/
+firefox-live-profile/
+firefox-test-profile/
+.firefox-fish-again-profile/
+web-ext-artifacts/
+*.xpi
+*.zip
+.DS_Store

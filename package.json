@@ -1,0 +1,12 @@
+{
+  "name": "fish-again-finder",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "start": "web-ext run --source-dir .",
+    "build:xpi": "web-ext build --source-dir . --artifacts-dir web-ext-artifacts --overwrite-dest"
+  },
+  "devDependencies": {
+    "web-ext": "^10.1.0"
+  }
+}

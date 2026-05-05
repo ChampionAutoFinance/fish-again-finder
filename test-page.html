@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Fish Again Finder Test</title>
+    <style>
+      body {
+        align-items: center;
+        background: #0b1020;
+        color: #fff;
+        display: grid;
+        font-family: Arial, Helvetica, sans-serif;
+        gap: 16px;
+        justify-items: center;
+        min-height: 100vh;
+        margin: 0;
+      }
+
+      button {
+        background: #5865f2;
+        border: 0;
+        border-radius: 7px;
+        color: #fff;
+        cursor: pointer;
+        font-size: 18px;
+        font-weight: 800;
+        padding: 12px 18px;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="fish">🎣 Fish Again</button>
+    <p>Clicks: <strong id="clicks">0</strong></p>
+    <script>
+      let clicks = 0;
+      document.getElementById("fish").addEventListener("click", () => {
+        clicks += 1;
+        document.getElementById("clicks").textContent = String(clicks);
+      });
+    </script>
+  </body>
+</html>

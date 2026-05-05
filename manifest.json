@@ -1,0 +1,35 @@
+{
+  "manifest_version": 2,
+  "name": "Fish Again Finder",
+  "version": "0.2.0",
+  "description": "Finds and clicks Fish Again buttons on the current page.",
+  "permissions": ["activeTab", "tabs", "<all_urls>"],
+  "background": {
+    "scripts": ["src/background.js"],
+    "persistent": false
+  },
+  "browser_action": {
+    "default_title": "Fish Again Finder",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon.svg"
+    }
+  },
+  "icons": {
+    "48": "icons/icon.svg"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "fish-again-finder@championautofinance.local"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+node_modules
+package.json
+package-lock.json
+firefox-test-profile
+firefox-live-profile
+.firefox-fish-again-profile
+fish-again-finder-extension.xpi
+*.zip
+.git
+.gitignore
+web-ext-artifacts
