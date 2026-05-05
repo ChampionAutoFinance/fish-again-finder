@@ -1,10 +1,33 @@
 {
   "name": "fish-again-finder",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "start": "web-ext run --source-dir .",
     "build:xpi": "web-ext build --source-dir . --artifacts-dir web-ext-artifacts --overwrite-dest"
+  },
+  "webExt": {
+    "ignoreFiles": [
+      "node_modules",
+      "package.json",
+      "package-lock.json",
+      "firefox-test-profile",
+      "firefox-live-profile",
+      ".firefox-fish-again-profile",
+      "fish-again-finder-extension.xpi",
+      "*.zip",
+      ".git",
+      ".gitignore",
+      ".web-ext-ignore",
+      "web-ext-artifacts",
+      "README.md",
+      "INSTALL.md",
+      "launch-fish-again-mac.command",
+      "launch-fish-again-windows.bat",
+      "test-page.html",
+      "cat-test-page.html",
+      "src/cat-autocatcher-content.js"
+    ]
   },
   "devDependencies": {
     "web-ext": "^10.1.0"

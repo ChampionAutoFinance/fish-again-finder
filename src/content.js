@@ -14,6 +14,20 @@
   const CONTROL_ATTRIBUTE = "data-fish-again-finder-control";
   const MATCH_STYLE_ATTRIBUTE = "data-fish-again-finder-inline-style";
   const MATCH_TEXT = /fish\s+again/i;
+  const CAT_TRIGGER_TEXT = /cat\s+has\s+appeared!?\s+type\s+["'“”]?cat["'“”]?\s+to\s+catch\s+it!?/i;
+  const VERIFY_COMMAND_TEXT = /\/verify\b/i;
+  const VERIFY_COMMAND_WITH_CODE_TEXT = /\/verify\s+([A-Za-z0-9][A-Za-z0-9_-]{1,31})\b/gi;
+  const VERIFY_CODE_LABEL_TEXT = /\bcode\s*(?::|：|-|=)\s*([A-Za-z0-9][A-Za-z0-9_-]{1,31})\b/i;
+  const VERIFY_PLACEHOLDER_WORDS = new Set([
+    "code",
+    "command",
+    "continue",
+    "playing",
+    "please",
+    "regen",
+    "result",
+    "verify"
+  ]);
   const CANDIDATE_SELECTOR = [
     "button",
     "a[href]",
@@ -23,10 +37,22 @@
     "[onclick]",
     "[tabindex]"
   ].join(",");
+  const TEXTBOX_SELECTOR = [
+    "div[role='textbox'][contenteditable='true']",
+    "div[data-slate-editor='true']",
+    "div[contenteditable='true']",
+    "textarea",
+    "input[type='text']"
+  ].join(",");
 
   const DEFAULT_CLICK_INTERVAL_MS = 3000;
   const MIN_CLICK_INTERVAL_MS = 250;
   const MAX_CLICK_INTERVAL_MS = 60000;
+  const VERIFY_IDLE_MS = 45000;
+  const VERIFY_COMMAND_COOLDOWN_MS = 120000;
+  const VERIFY_ANSWER_FIELD_TIMEOUT_MS = 6000;
+  const VERIFY_ANSWER_FIELD_POLL_MS = 150;
+  const POST_VERIFY_FISH_DELAY_MS = 1200;
   const SETTINGS_KEY = "fish-again-finder-settings-v1";
   const savedSettings = readSettings();
 
@@ -37,6 +63,9 @@
   let isAutoClicking = false;
   let clickCount = 0;
   let lastClickAt = null;
+  let lastClickAtMs = 0;
+  let runStartedAtMs = 0;
+  let lastVerifyAtMs = 0;
   let lastMessage = "Paused.";
   let matchOrderCounter = 0;
   let lastOnScreenCount = 0;
@@ -92,6 +121,10 @@
 
   function normalizeText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function getPageText() {
+    return normalizeText(document.body ? document.body.textContent : "");
   }
 
   function isVisible(element) {
@@ -221,6 +254,14 @@
     return Boolean(controlRoot && (element === controlRoot || controlRoot.contains(element)));
   }
 
+  function catTriggerVisibleOnPage() {
+    return CAT_TRIGGER_TEXT.test(getPageText());
+  }
+
+  function shouldShowControl() {
+    return isAutoClicking || (lastCount > 0 && !catTriggerVisibleOnPage());
+  }
+
   function scrollElementToBottom(element) {
     if (!element || isExtensionControlElement(element)) {
       return;
@@ -260,6 +301,322 @@
     window.requestAnimationFrame(scrollPageToBottom);
     window.setTimeout(scrollPageToBottom, 250);
     window.setTimeout(scrollPageToBottom, 900);
+  }
+
+  function findTextboxes() {
+    return Array.from(document.querySelectorAll(TEXTBOX_SELECTOR))
+      .filter(isVisible)
+      .filter((element) => {
+        if (isExtensionControlElement(element)) {
+          return false;
+        }
+
+        if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+          return !element.disabled && !element.readOnly;
+        }
+
+        return element.isContentEditable || element.getAttribute("role") === "textbox";
+      });
+  }
+
+  function findTextbox() {
+    const boxes = findTextboxes().filter(isOnScreen);
+    const candidates = boxes.length ? boxes : findTextboxes();
+    const sorted = candidates.sort((a, b) => {
+      const aRect = a.getBoundingClientRect();
+      const bRect = b.getBoundingClientRect();
+      return bRect.bottom - aRect.bottom;
+    });
+
+    return sorted[0] || null;
+  }
+
+  function setNativeValue(element, value) {
+    const prototype = Object.getPrototypeOf(element);
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(element, value);
+    } else {
+      element.value = value;
+    }
+  }
+
+  function dispatchInput(element, data) {
+    try {
+      element.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data
+        })
+      );
+    } catch (error) {
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  function replaceEditableText(element, text) {
+    element.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+    element.focus();
+    element.click();
+
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      setNativeValue(element, text);
+      try {
+        element.setSelectionRange(text.length, text.length);
+      } catch (error) {
+        // Some inputs do not support selection ranges.
+      }
+      dispatchInput(element, text);
+      return;
+    }
+
+    let inserted = false;
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      inserted = document.execCommand("insertText", false, text);
+    } catch (error) {
+      inserted = false;
+    }
+
+    if (!inserted || normalizeText(element.textContent) !== text) {
+      element.textContent = text;
+    }
+
+    dispatchInput(element, text);
+  }
+
+  function insertEditableText(element, text) {
+    element.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+    element.focus();
+    element.click();
+
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      const nextValue = `${element.value || ""}${text}`;
+      setNativeValue(element, nextValue);
+      try {
+        element.setSelectionRange(nextValue.length, nextValue.length);
+      } catch (error) {
+        // Some inputs do not support selection ranges.
+      }
+      dispatchInput(element, text);
+      return;
+    }
+
+    let inserted = false;
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      inserted = document.execCommand("insertText", false, text);
+    } catch (error) {
+      inserted = false;
+    }
+
+    if (!inserted) {
+      element.textContent = `${element.textContent || ""}${text}`;
+    }
+
+    dispatchInput(element, text);
+  }
+
+  function dispatchEnter(element) {
+    dispatchKey(element, "Enter", "Enter", 13);
+  }
+
+  function dispatchTab(element) {
+    dispatchKey(element, "Tab", "Tab", 9);
+  }
+
+  function dispatchSpace(element) {
+    dispatchKey(element, " ", "Space", 32);
+  }
+
+  function dispatchKey(element, key, code, keyCode) {
+    ["keydown", "keypress", "keyup"].forEach((type) => {
+      element.dispatchEvent(
+        new KeyboardEvent(type, {
+          key,
+          code,
+          keyCode,
+          which: keyCode,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+    });
+  }
+
+  function getChatTextbox() {
+    const textbox = findTextbox();
+    if (!textbox) {
+      throw new Error("message box not found");
+    }
+
+    return textbox;
+  }
+
+  function sendChatCommand(command) {
+    const textbox = getChatTextbox();
+    replaceEditableText(textbox, command);
+    dispatchEnter(textbox);
+    window.setTimeout(() => dispatchEnter(textbox), 350);
+  }
+
+  function sendVerifyCode(code) {
+    const textbox = getChatTextbox();
+    replaceEditableText(textbox, "/verify ");
+
+    waitForVerifyAnswerField(() => {
+      const nextTextbox = findTextbox() || textbox;
+      insertEditableText(nextTextbox, code);
+      dispatchEnter(nextTextbox);
+      scheduleFishCommand();
+    });
+  }
+
+  function scheduleFishCommand() {
+    window.setTimeout(() => {
+      try {
+        sendChatCommand("/fish");
+      } catch (error) {
+        lastMessage = `Running. Verify sent, but /fish failed: ${error.message}`;
+        reportState();
+      }
+    }, POST_VERIFY_FISH_DELAY_MS);
+  }
+
+  function waitForVerifyAnswerField(onReady, startedAt = Date.now()) {
+    if (verifyAnswerFieldVisible()) {
+      onReady();
+      return;
+    }
+
+    if (Date.now() - startedAt >= VERIFY_ANSWER_FIELD_TIMEOUT_MS) {
+      lastMessage = "Running. /verify opened, but the answer field did not appear.";
+      reportState();
+      return;
+    }
+
+    window.setTimeout(() => {
+      waitForVerifyAnswerField(onReady, startedAt);
+    }, VERIFY_ANSWER_FIELD_POLL_MS);
+  }
+
+  function verifyAnswerFieldVisible() {
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && !isExtensionControlElement(activeElement)) {
+      const activeText = normalizeText(
+        [
+          activeElement.getAttribute("aria-label"),
+          activeElement.getAttribute("placeholder"),
+          activeElement.getAttribute("title"),
+          activeElement.textContent
+        ].filter(Boolean).join(" ")
+      );
+
+      if (activeText.length <= 80 && /\banswer\b/i.test(activeText)) {
+        return true;
+      }
+    }
+
+    const fieldIsVisible = Array.from(
+      document.querySelectorAll("[aria-label], [placeholder], [title], span, div")
+    )
+      .filter(isVisible)
+      .some((element) => {
+        const text = normalizeText(
+          [
+            element.getAttribute("aria-label"),
+            element.getAttribute("placeholder"),
+            element.getAttribute("title"),
+            element.textContent
+          ].filter(Boolean).join(" ")
+        );
+
+        return text.length <= 80 && /\banswer\b/i.test(text);
+      });
+
+    if (fieldIsVisible && /\/verify\b/i.test(getPageText())) {
+      return true;
+    }
+
+    return /\/verify\b[\s\S]{0,120}\banswer\b/i.test(getPageText());
+  }
+
+  function idleMsSinceLastClick(now) {
+    const base = lastClickAtMs || runStartedAtMs || now;
+    return now - base;
+  }
+
+  function getVerifyCode(pageText) {
+    const codeMatch = pageText.match(VERIFY_CODE_LABEL_TEXT);
+    const codeFromLabel = codeMatch && codeMatch[1];
+    if (isValidVerifyCode(codeFromLabel)) {
+      return codeFromLabel;
+    }
+
+    const commandMatches = Array.from(pageText.matchAll(VERIFY_COMMAND_WITH_CODE_TEXT));
+    for (let index = commandMatches.length - 1; index >= 0; index -= 1) {
+      const codeFromCommand = commandMatches[index] && commandMatches[index][1];
+      if (isValidVerifyCode(codeFromCommand)) {
+        return codeFromCommand;
+      }
+    }
+
+    return "";
+  }
+
+  function isValidVerifyCode(value) {
+    const code = String(value || "").trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{1,31}$/.test(code)) {
+      return false;
+    }
+
+    return !VERIFY_PLACEHOLDER_WORDS.has(code.toLowerCase());
+  }
+
+  function maybeSendVerifyCommand(now) {
+    if (!isAutoClicking || idleMsSinceLastClick(now) < VERIFY_IDLE_MS) {
+      return false;
+    }
+
+    const pageText = getPageText();
+    if (!VERIFY_COMMAND_TEXT.test(pageText)) {
+      return false;
+    }
+
+    const code = getVerifyCode(pageText);
+    if (!code) {
+      lastMessage = "Running. Saw /verify, but no verify code was found yet.";
+      reportState();
+      return false;
+    }
+
+    if (lastVerifyAtMs > 0 && now - lastVerifyAtMs < VERIFY_COMMAND_COOLDOWN_MS) {
+      return false;
+    }
+
+    try {
+      sendVerifyCode(code);
+      lastVerifyAtMs = now;
+      lastMessage = `Running. No clicks lately; sent /verify with code ${code}.`;
+      reportState();
+      return true;
+    } catch (error) {
+      lastMessage = `Running. Saw /verify, but could not send command: ${error.message}`;
+      reportState();
+      return false;
+    }
   }
 
   function reportState() {
@@ -322,7 +679,9 @@
     const target = getNewestOnScreenMatch();
 
     if (!target) {
-      lastMessage = "Running. No on-screen Fish Again button found yet.";
+      if (!maybeSendVerifyCommand(Date.now())) {
+        lastMessage = "Running. No on-screen Fish Again button found yet.";
+      }
       reportState();
       return getState();
     }
@@ -331,7 +690,9 @@
     target.click();
     scrollPageToBottomAfterClick();
     clickCount += 1;
-    lastClickAt = new Date().toISOString();
+    lastClickAtMs = Date.now();
+    lastClickAt = new Date(lastClickAtMs).toISOString();
+    lastVerifyAtMs = 0;
     lastMessage = `Running. Clicked newest on-screen button ${clickCount} time${clickCount === 1 ? "" : "s"}.`;
     reportState();
     return getState();
@@ -343,6 +704,8 @@
     }
 
     isAutoClicking = true;
+    runStartedAtMs = Date.now();
+    lastVerifyAtMs = 0;
     lastMessage = `Running. Clicking every ${formatSeconds(clickIntervalMs)} seconds.`;
     window.clearInterval(clickTimer);
     clickFishAgain();
@@ -359,6 +722,8 @@
       // The document can be tearing down during navigation.
     }
     clickTimer = 0;
+    runStartedAtMs = 0;
+    lastVerifyAtMs = 0;
     lastMessage = "Paused.";
     reportState();
     return getState();
@@ -641,9 +1006,19 @@
   }
 
   function renderControl() {
+    const shouldShow = shouldShowControl();
+    if (!controlRoot && !shouldShow) {
+      return;
+    }
+
     createControl();
 
     if (!controlRoot || !controlButton || !controlStatus || !controlCount) {
+      return;
+    }
+
+    controlRoot.style.setProperty("display", shouldShow ? "grid" : "none", "important");
+    if (!shouldShow) {
       return;
     }
 
@@ -718,6 +1093,5 @@
   window.addEventListener("pageshow", scheduleScan);
   window.addEventListener("focus", scheduleScan);
   window.addEventListener("fish-again-finder-rescan", scheduleScan);
-  createControl();
   scheduleScan();
 })();

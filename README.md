@@ -13,6 +13,7 @@ Firefox extension and launcher for automatically clicking the newest on-screen `
 - Lets you change the click interval from the panel.
 - Clicks the newest on-screen matching button.
 - Scrolls to the bottom after each click.
+- If fishing goes idle and the page shows a verify challenge, extracts the current `Code : ...` value, types `/verify `, waits for the `answer` field, enters the code, submits, then sends `/fish`.
 - Shows the number of matches in the extension badge and popup. While running, the badge says `ON`.
 - Watches page changes so dynamically loaded buttons are detected.
 - Tries to inject itself into the active tab from the popup if the extension was loaded after the page.

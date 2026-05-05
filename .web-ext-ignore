@@ -9,3 +9,5 @@ fish-again-finder-extension.xpi
 .git
 .gitignore
 web-ext-artifacts
+cat-test-page.html
+src/cat-autocatcher-content.js

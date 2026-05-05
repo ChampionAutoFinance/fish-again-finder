@@ -31,6 +31,8 @@ If macOS blocks the launcher, right-click it and choose `Open`.
 
 The extension clicks the newest on-screen `Fish Again` button and scrolls to the bottom after each click.
 
+If the page asks for verification, it reads the current `Code : ...` value and submits it through `/verify`, then sends `/fish` to resume.
+
 ## Note
 
 Firefox treats this as a temporary local extension. For a normal permanent add-on install, the extension has to be signed through Mozilla Add-ons.

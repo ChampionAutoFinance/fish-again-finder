@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Fish Again Finder",
-  "version": "0.2.0",
-  "description": "Finds and clicks Fish Again buttons on the current page.",
+  "version": "0.3.0",
+  "description": "Finds and clicks Fish Again buttons, with verify-code recovery for idle sessions.",
   "permissions": ["activeTab", "tabs", "<all_urls>"],
   "background": {
     "scripts": ["src/background.js"],
